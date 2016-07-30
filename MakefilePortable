@@ -1,0 +1,73 @@
+# Copyright (c) 2012 The Chromium OS Authors. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+PREFIX ?= /usr
+BINDIR ?= $(PREFIX)/bin
+LIBDIR ?= $(PREFIX)/lib
+
+CC ?= cc
+HOST_CC = $(CC)
+
+override CFLAGS += -MD -MP -fPIC
+override CPPFLAGS += -DPRELOADPATH="\"$(LIBDIR)/libminijailpreload.so\""
+
+HAVE_SECUREBITS_H = yes
+USE_seccomp = yes
+
+ifneq ($(HAVE_SECUREBITS_H),no)
+CPPFLAGS += -DHAVE_SECUREBITS_H
+endif
+ifneq ($(USE_seccomp),yes)
+CPPFLAGS += -DUSE_SECCOMP_SOFTFAIL
+endif
+
+OBJS_minijail0 = \
+	libconstants.gen.o libsyscalls.gen.o libminijail.o syscall_filter.o \
+	signal_handler.o bpf.o util.o elfparse.o minijail0.o
+OBJS_libminijail = \
+	libminijail.o syscall_filter.o signal_handler.o bpf.o util.o \
+	libconstants.gen.o libsyscalls.gen.o
+OBJS_libminijailpreload = \
+	libminijailpreload.o libminijail.o \ libconstants.gen.o libsyscalls.gen.o \
+	syscall_filter.o signal_handler.o bpf.o util.o
+OBJS_libminijail_unittest = \
+	libminijail_unittest.o libminijail.o syscall_filter.o signal_handler.o bpf.o \
+	util.o libconstants.gen.o libsyscalls.gen.o
+
+all: minijail0 libminijail.so libminijailpreload.so
+test: libminijail_unittest
+
+minijail0: $(OBJS_minijail0)
+	$(CC) $^ $(CFLAGS) $(CPPFLAGS) -o $@ $(LDFLAGS) -lcap -ldl
+
+libminijail.so:  $(OBJS_libminijail)
+	$(CC) $^ $(CFLAGS) $(CPPFLAGS) -o $@ $(LDFLAGS) -shared -lcap
+
+libminijailpreload.so: $(OBJS_libminijailpreload)
+	$(CC) $^ $(CFLAGS) $(CPPFLAGS) -o $@ $(LDFLAGS) -shared -lcap -ldl
+
+libminijail_unittest:  $(OBJS_libminijail_unittest)
+	$(CC) $^ $(CFLAGS) $(CPPFLAGS) -o $@ $(LDFLAGS) -lcap
+
+libsyscalls.gen.c: Makefile libsyscalls.h
+	@printf "Generating target-arch specific $@... "
+	$(QUIET) CC=$(HOST_CC) ./gen_syscalls.sh $@
+
+libconstants.gen.c: Makefile libconstants.h
+	@printf "Generating target-arch specific $@... "
+	$(QUIET) CC=$(HOST_CC) ./gen_constants.sh $@
+
+install:
+	install -d $(DESTDIR)$(BINDIR)
+	install -m 755 minijail0 $(DESTDIR)$(BINDIR)
+	install -m 644 minijail0.1 $(DESTDIR)$(MANDIR)/man1
+	install -m 644 minijail0.5 $(DESTDIR)$(MANDIR)/man5
+	install -d $(DESTDIR)$(LIBDIR)
+	install -m 755 libminijail.so $(DESTDIR)$(LIBDIR)
+	install -m 755 libminijailpreload.so $(DESTDIR)$(LIBDIR)
+
+clean:
+	-rm minijail0 libminijail_unittest *.gen.c *.o *.d *.so
+
+.PHONY: all test install clean
